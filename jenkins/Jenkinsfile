@@ -3,7 +3,7 @@
 // 1. Pela entrada HTTPS, com um token de deploy (vd_…) emitido no Heimdall e
 //    guardado como credencial "Secret text" (id: volundr-loja).
 // 2. Pelo portão SSH, com a chave do alvo guardada como credencial "SSH
-//    Username with private key" (id: volundr-portao) e o plugin SSH Agent —
+//    Username with private key" (id: volundr-gate) e o plugin SSH Agent —
 //    sem porta nova no servidor. O known_hosts do servidor vai numa
 //    credencial "Secret file" (id: volundr-known-hosts).
 //
@@ -59,7 +59,7 @@ pipeline {
     // stage('deploy (SSH)') {
     //   steps {
     //     withCredentials([file(credentialsId: 'volundr-known-hosts', variable: 'KNOWN_HOSTS')]) {
-    //       sshagent(credentials: ['volundr-portao']) {
+    //       sshagent(credentials: ['volundr-gate']) {
     //         sh './volundr deploy --ssh deploy@servidor --ssh-option "UserKnownHostsFile=$KNOWN_HOSTS" --target "$VOLUNDR_TARGET" --image "api=$IMAGE" --reason "$BUILD_TAG"'
     //       }
     //     }
