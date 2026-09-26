@@ -1,0 +1,69 @@
+// O deploy pelo Volundr num Jenkins, de dois jeitos. Escolha um dos estágios.
+//
+// 1. Pela entrada HTTPS, com um token de deploy (vd_…) emitido no Heimdall e
+//    guardado como credencial "Secret text" (id: volundr-loja).
+// 2. Pelo portão SSH, com a chave do alvo guardada como credencial "SSH
+//    Username with private key" (id: volundr-portao) e o plugin SSH Agent —
+//    sem porta nova no servidor. O known_hosts do servidor vai numa
+//    credencial "Secret file" (id: volundr-known-hosts).
+//
+// O `volundr` vem do release, conferido pelo SHA256SUMS. O estágio falha com
+// o código do deploy: 1 falhou e o alvo ficou como estava, 2 falhou e o alvo
+// pode ter ficado no meio, 3 recusado, 4 ocupado ou tempo esgotado.
+
+pipeline {
+  agent any
+
+  environment {
+    VOLUNDR_VERSION = 'latest'
+    VOLUNDR_TARGET = 'loja'
+    IMAGE = "ghcr.io/acme/loja-api@${params.DIGEST}"
+  }
+
+  parameters {
+    string(name: 'DIGEST', description: 'sha256:… da imagem construída')
+  }
+
+  stages {
+    stage('volundr') {
+      steps {
+        sh '''
+          set -eu
+          case "$(uname -m)" in
+            x86_64) asset=volundr-linux-amd64 ;;
+            aarch64) asset=volundr-linux-arm64 ;;
+            *) echo "sem volundr para $(uname -m)"; exit 1 ;;
+          esac
+          base=https://github.com/dlduarte/heimdall-releases/releases
+          if [ "$VOLUNDR_VERSION" = latest ]; then url="$base/latest/download"; else url="$base/download/v${VOLUNDR_VERSION#v}"; fi
+          curl -fsSL --retry 3 -o volundr "$url/$asset"
+          curl -fsSL --retry 3 -o SHA256SUMS "$url/volundr-SHA256SUMS"
+          expected=$(awk -v f="$asset" '$2 == f { print $1 }' SHA256SUMS)
+          actual=$(sha256sum volundr | cut -d' ' -f1)
+          [ -n "$expected" ] && [ "$expected" = "$actual" ] || { echo "o SHA-256 não confere"; exit 1; }
+          chmod +x volundr
+        '''
+      }
+    }
+
+    // 1. HTTPS, com o token de deploy.
+    stage('deploy (HTTPS)') {
+      steps {
+        withCredentials([string(credentialsId: 'volundr-loja', variable: 'VOLUNDR_TOKEN')]) {
+          sh './volundr deploy --host https://deploy.loja.com.br --target "$VOLUNDR_TARGET" --image "api=$IMAGE" --reason "$BUILD_TAG"'
+        }
+      }
+    }
+
+    // 2. Ou pelo portão SSH, com a chave do alvo.
+    // stage('deploy (SSH)') {
+    //   steps {
+    //     withCredentials([file(credentialsId: 'volundr-known-hosts', variable: 'KNOWN_HOSTS')]) {
+    //       sshagent(credentials: ['volundr-portao']) {
+    //         sh './volundr deploy --ssh deploy@servidor --ssh-option "UserKnownHostsFile=$KNOWN_HOSTS" --target "$VOLUNDR_TARGET" --image "api=$IMAGE" --reason "$BUILD_TAG"'
+    //       }
+    //     }
+    //   }
+    // }
+  }
+}

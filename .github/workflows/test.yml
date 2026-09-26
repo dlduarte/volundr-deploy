@@ -1,0 +1,42 @@
+name: Teste
+
+# A Action baixa o volundr do release, confere o SHA-256 e roda, nos três
+# sistemas. Sem um servidor de verdade: o host não responde, e o deploy tem
+# de sair com 4 ("sem resposta").
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  action:
+    name: Action (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: deploy
+        uses: ./
+        continue-on-error: true
+        with:
+          host: https://127.0.0.1:9
+          target: loja
+          images: api=ghcr.io/acme/loja-api:1
+          token: vd_00000000_teste
+          timeout: "60"
+
+      - name: O código do deploy
+        shell: bash
+        env:
+          RESULT: ${{ steps.deploy.outputs.result }}
+        run: |
+          echo "result=$RESULT"
+          [ "$RESULT" = 4 ]

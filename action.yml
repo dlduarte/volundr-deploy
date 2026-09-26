@@ -1,0 +1,112 @@
+name: Volundr deploy
+description: Deploy de imagens num servidor com o Volundr, o agente do Heimdall — pelo OIDC do job, sem segredo guardado.
+author: dlduarte
+branding:
+  icon: upload-cloud
+  color: orange
+
+inputs:
+  host:
+    description: A URL da entrada do CI do Volundr (o VOLUNDR_CI_URL do servidor), ex. https://deploy.loja.com.br
+    required: true
+  target:
+    description: O alvo de deploy, como criado no Heimdall
+    required: true
+  images:
+    description: |
+      Um serviço e a imagem por linha, por digest ou por tag:
+        api=ghcr.io/acme/loja-api@sha256:…
+    required: false
+    default: ""
+  reason:
+    description: A versão, o motivo — aparece no histórico do alvo
+    required: false
+    default: ""
+  rollback:
+    description: "true: volta às imagens de antes do último deploy, no lugar de um deploy"
+    required: false
+    default: "false"
+  timeout:
+    description: Quantos segundos esperar o fim do deploy
+    required: false
+    default: "1800"
+  token:
+    description: |
+      Um token de deploy (vd_…), de um secret. Sem ele, vale o OIDC do job —
+      dê `permissions: id-token: write` ao job.
+    required: false
+    default: ""
+  version:
+    description: A versão do volundr (1.9.0), ou latest
+    required: false
+    default: latest
+
+outputs:
+  result:
+    description: "O código do deploy: 0 concluído, 1 falhou e o alvo ficou como estava, 2 falhou e o alvo pode ter ficado no meio, 3 recusado, 4 ocupado ou tempo esgotado"
+    value: ${{ steps.deploy.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - name: Baixar o volundr
+      id: download
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        BASE: https://github.com/dlduarte/heimdall-releases/releases
+      run: |
+        set -euo pipefail
+        case "$RUNNER_OS/$RUNNER_ARCH" in
+          Linux/X64) asset=volundr-linux-amd64 ;;
+          Linux/ARM64) asset=volundr-linux-arm64 ;;
+          macOS/ARM64) asset=volundr-macos-arm64 ;;
+          macOS/X64) asset=volundr-macos-amd64 ;;
+          Windows/X64) asset=volundr-windows-amd64.exe ;;
+          *) echo "::error::Sem volundr para $RUNNER_OS/$RUNNER_ARCH"; exit 1 ;;
+        esac
+        if [ "$VERSION" = latest ]; then
+          url="$BASE/latest/download"
+        else
+          url="$BASE/download/v${VERSION#v}"
+        fi
+        dir="$RUNNER_TEMP/volundr"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 -o "$dir/$asset" "$url/$asset"
+        curl -fsSL --retry 3 -o "$dir/SHA256SUMS" "$url/volundr-SHA256SUMS"
+        # O binário tem de ser o que o release publicou.
+        expected=$(awk -v f="$asset" '$2 == f || $2 == "*"f { print $1 }' "$dir/SHA256SUMS")
+        if command -v sha256sum >/dev/null; then
+          actual=$(sha256sum "$dir/$asset" | cut -d' ' -f1)
+        else
+          actual=$(shasum -a 256 "$dir/$asset" | cut -d' ' -f1)
+        fi
+        if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+          echo "::error::O SHA-256 do $asset não confere com o do release"
+          exit 1
+        fi
+        chmod +x "$dir/$asset"
+        echo "bin=$dir/$asset" >> "$GITHUB_OUTPUT"
+        "$dir/$asset" versao
+
+    - name: Deploy
+      id: deploy
+      shell: bash
+      env:
+        VOLUNDR_BIN: ${{ steps.download.outputs.bin }}
+        VOLUNDR_HOST: ${{ inputs.host }}
+        VOLUNDR_TARGET: ${{ inputs.target }}
+        VOLUNDR_IMAGES: ${{ inputs.images }}
+        VOLUNDR_TOKEN: ${{ inputs.token }}
+        REASON: ${{ inputs.reason }}
+        ROLLBACK: ${{ inputs.rollback }}
+        TIMEOUT: ${{ inputs.timeout }}
+      run: |
+        set -uo pipefail
+        args=(deploy --timeout "$TIMEOUT")
+        [ -n "$REASON" ] && args+=(--reason "$REASON")
+        [ "$ROLLBACK" = true ] && args+=(--rollback)
+        "$VOLUNDR_BIN" "${args[@]}"
+        code=$?
+        echo "result=$code" >> "$GITHUB_OUTPUT"
+        exit $code

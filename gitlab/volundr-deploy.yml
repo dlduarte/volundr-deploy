@@ -1,0 +1,56 @@
+# O deploy pelo Volundr no GitLab CI, com o id_token do job (OIDC): nenhum
+# segredo guardado no projeto.
+#
+#   include:
+#     - remote: https://raw.githubusercontent.com/dlduarte/volundr-deploy/v1/gitlab/volundr-deploy.yml
+#
+#   deploy:
+#     extends: .volundr-deploy
+#     stage: deploy
+#     environment: producao              # o ambiente da regra do alvo (protegido, de preferência)
+#     variables:
+#       VOLUNDR_HOST: https://deploy.loja.com.br
+#       VOLUNDR_TARGET: loja
+#       VOLUNDR_IMAGES: api=$CI_REGISTRY_IMAGE@$DIGEST
+#     id_tokens:
+#       VOLUNDR_TOKEN:
+#         aud: https://deploy.loja.com.br  # o mesmo VOLUNDR_HOST
+#
+# O `aud` do id_token precisa ser a URL do Volundr (o VOLUNDR_CI_URL do
+# servidor). Sem OIDC, um token de deploy (vd_…) numa variável mascarada
+# VOLUNDR_TOKEN serve igual.
+#
+# Variáveis: VOLUNDR_HOST, VOLUNDR_TARGET, VOLUNDR_IMAGES (uma por linha),
+# VOLUNDR_REASON (padrão: o commit), VOLUNDR_VERSION (padrão: latest),
+# VOLUNDR_TIMEOUT (padrão: 1800).
+#
+# O job falha com o código do deploy: 1 falhou e o alvo ficou como estava,
+# 2 falhou e o alvo pode ter ficado no meio, 3 recusado, 4 ocupado ou tempo
+# esgotado.
+
+.volundr-deploy:
+  image: alpine:3
+  variables:
+    VOLUNDR_VERSION: latest
+    VOLUNDR_TIMEOUT: "1800"
+    VOLUNDR_REASON: $CI_COMMIT_SHORT_SHA
+  before_script:
+    - apk add --no-cache curl >/dev/null
+    - |
+      set -eu
+      case "$(uname -m)" in
+        x86_64) asset=volundr-linux-amd64 ;;
+        aarch64) asset=volundr-linux-arm64 ;;
+        *) echo "sem volundr para $(uname -m)"; exit 1 ;;
+      esac
+      base=https://github.com/dlduarte/heimdall-releases/releases
+      if [ "$VOLUNDR_VERSION" = latest ]; then url="$base/latest/download"; else url="$base/download/v${VOLUNDR_VERSION#v}"; fi
+      curl -fsSL --retry 3 -o /usr/local/bin/volundr "$url/$asset"
+      curl -fsSL --retry 3 -o /tmp/SHA256SUMS "$url/volundr-SHA256SUMS"
+      expected=$(awk -v f="$asset" '$2 == f { print $1 }' /tmp/SHA256SUMS)
+      actual=$(sha256sum /usr/local/bin/volundr | cut -d' ' -f1)
+      [ -n "$expected" ] && [ "$expected" = "$actual" ] || { echo "o SHA-256 do $asset não confere com o do release"; exit 1; }
+      chmod +x /usr/local/bin/volundr
+      volundr versao
+  script:
+    - volundr deploy --reason "$VOLUNDR_REASON" --timeout "$VOLUNDR_TIMEOUT"
