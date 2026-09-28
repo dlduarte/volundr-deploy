@@ -106,7 +106,9 @@ runs:
         args=(deploy --timeout "$TIMEOUT")
         [ -n "$REASON" ] && args+=(--reason "$REASON")
         [ "$ROLLBACK" = true ] && args+=(--rollback)
-        "$VOLUNDR_BIN" "${args[@]}"
-        code=$?
+        # O runner roda este passo com bash -e: sem o ||, um deploy que falha
+        # pararia o passo antes de gravar a saída result.
+        code=0
+        "$VOLUNDR_BIN" "${args[@]}" || code=$?
         echo "result=$code" >> "$GITHUB_OUTPUT"
         exit $code
