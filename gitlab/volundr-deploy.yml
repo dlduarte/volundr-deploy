@@ -51,6 +51,6 @@
       actual=$(sha256sum /usr/local/bin/volundr | cut -d' ' -f1)
       [ -n "$expected" ] && [ "$expected" = "$actual" ] || { echo "o SHA-256 do $asset não confere com o do release"; exit 1; }
       chmod +x /usr/local/bin/volundr
-      volundr versao
+      volundr version
   script:
     - volundr deploy --reason "$VOLUNDR_REASON" --timeout "$VOLUNDR_TIMEOUT"
